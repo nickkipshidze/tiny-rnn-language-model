@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Character-Level RNN-LM Toy</title>
+        <style>
+            :root {
+                --bg: #0d1117;
+                --panel: #161b22;
+                --panel-2: #1c2128;
+                --border: #30363d;
+                --text: #e6edf3;
+                --muted: #8b949e;
+                --accent: #2f81f7;
+                --green: #238636;
+                --red: #da3633;
+            }
+
+            * {
+                box-sizing: border-box
+            }
+
+            body {
+                margin: 0;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                background: var(--bg);
+                color: var(--text);
+                padding: 24px;
+            }
+
+            .wrapper {
+                max-width: 1100px;
+                margin: 0 auto;
+            }
+
+            h1 {
+                font-size: 20px;
+                font-weight: 500;
+                margin-bottom: 16px;
+            }
+
+            .layout {
+                display: flex;
+                gap: 20px;
+            }
+
+            .left,
+            .right {
+                display: flex;
+                flex-direction: column;
+                gap: 16px;
+            }
+
+            .left {
+                flex: 2
+            }
+
+            .right {
+                flex: 1
+            }
+
+            textarea {
+                width: 100%;
+                height: 140px;
+                background: var(--panel-2);
+                color: var(--text);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 12px;
+                font-size: 14px;
+                resize: none;
+                outline: none;
+                caret-color: var(--accent);
+                box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6);
+                transition: border 0.15s, box-shadow 0.15s, background 0.15s;
+            }
+
+            textarea::placeholder {
+                color: var(--muted)
+            }
+
+            textarea:focus {
+                border-color: var(--accent);
+                background: #22272e;
+                box-shadow:
+                    inset 0 2px 8px rgba(0, 0, 0, 0.7),
+                    0 0 0 1px var(--accent);
+            }
+
+            .panel {
+                background: var(--panel);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 14px;
+            }
+
+            .slider-group {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                margin-bottom: 12px;
+            }
+
+            .slider-label {
+                display: flex;
+                justify-content: space-between;
+                font-size: 12px;
+                color: var(--muted);
+            }
+
+            input[type="range"] {
+                width: 100%
+            }
+
+            .buttons {
+                display: flex;
+                gap: 8px;
+                margin-top: 10px;
+            }
+
+            button {
+                flex: 1;
+                padding: 8px;
+                border-radius: 6px;
+                border: 1px solid var(--border);
+                background: transparent;
+                color: var(--text);
+                cursor: pointer;
+                font-size: 13px;
+            }
+
+            button.start {
+                background: var(--green);
+                border: none;
+            }
+
+            button.stop {
+                background: var(--red);
+                border: none;
+            }
+
+            button:hover {
+                opacity: 0.9
+            }
+
+            .output {
+                height: 100%;
+                min-height: 300px;
+                max-height: 500px;
+                overflow-y: auto;
+                background: var(--panel);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 12px;
+                font-family: monospace;
+                font-size: 13px;
+                line-height: 1.4;
+                white-space: pre-wrap;
+            }
+
+            @media (max-width: 800px) {
+                .layout {
+                    flex-direction: column
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="wrapper">
+            <h1 style="margin-bottom: 0;">Character Generator RNN-LM Model Demo Web Interface</h1>
+            <p style="color: #9b9b9b; margin-top: 0;">Made by Nick Kipshidze</p>
+            <div class="layout">
+                <div class="left">
+                    <textarea id="prompt" placeholder="Type your prompt here..."></textarea>
+                    <div class="output" id="output"></div>
+                </div>
+                <div class="right">
+                    <div class="panel">
+                        <div class="slider-group">
+                            <div class="slider-label">
+                                <span>Temperature</span>
+                                <span id="tempVal">1.0</span>
+                            </div>
+                            <input type="range" id="temperature" min="0.1" max="2" step="0.1" value="1.0">
+                        </div>
+                        <div class="slider-group">
+                            <div class="slider-label">
+                                <span>Top-K</span>
+                                <span id="topkVal">5</span>
+                            </div>
+                            <input type="range" id="top_k" min="1" max="50" step="1" value="5">
+                        </div>
+                        <div class="slider-group">
+                            <div class="slider-label">
+                                <span>Interval (ms)</span>
+                                <span id="intervalVal">50</span>
+                            </div>
+                            <input type="range" id="interval" min="10" max="100" step="1" value="50">
+                        </div>
+                        <div class="buttons">
+                            <button class="start" onclick="startGeneration()">Start</button>
+                            <button class="stop" onclick="stopGeneration()">Stop</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <script>
+            let intervalId = null
+            let isRequestInFlight = false
+            let text = ""
+
+            const tempSlider = document.getElementById("temperature")
+            const topkSlider = document.getElementById("top_k")
+            const intervalSlider = document.getElementById("interval")
+
+            tempSlider.oninput = () => document.getElementById("tempVal").textContent = tempSlider.value
+            topkSlider.oninput = () => document.getElementById("topkVal").textContent = topkSlider.value
+            intervalSlider.oninput = () => document.getElementById("intervalVal").textContent = intervalSlider.value
+
+            async function tick() {
+                if (isRequestInFlight) return
+                isRequestInFlight = true
+                try {
+                    const res = await fetch("/generate", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            prompt: text,
+                            temperature: parseFloat(tempSlider.value),
+                            top_k: parseInt(topkSlider.value)
+                        })
+                    })
+                    const data = await res.json()
+                    text += data.prediction
+                    const output = document.getElementById("output")
+                    output.textContent = text
+                    output.scrollTop = output.scrollHeight
+                } catch (e) {
+                    stopGeneration()
+                }
+                isRequestInFlight = false
+            }
+
+            function startGeneration() {
+                if (intervalId) return
+                text = document.getElementById("prompt").value
+                document.getElementById("output").textContent = text
+                intervalId = setInterval(tick, parseInt(intervalSlider.value))
+            }
+
+            function stopGeneration() {
+                clearInterval(intervalId)
+                intervalId = null
+            }
+        </script>
+    </body>
+</html>
